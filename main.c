@@ -17,7 +17,7 @@
 
 typedef struct stack_t {
 	Image data[10];
-	char *filename[10];
+	char *destinations[500];
 	int count;
 	/*int max;
 	pthread_mutex_t lock;
@@ -113,11 +113,18 @@ void stack_init() {
 	srand(time(NULL));
 }
 
+char* source;
+char* destination;
 char* effect;
 
 void* producer(void* file);
 void* producer(void* file) {
-	Image img = open_bitmap(file);
+	char* sourcePath = malloc(sizeof(char) * 100);
+	strcpy(sourcePath, source);
+	strcat(sourcePath, "/");
+	strcat(sourcePath, file);
+
+	Image img = open_bitmap(sourcePath);
 	Image new;
 
 	if (strcmp(effect, "edge") == 0) {
@@ -128,12 +135,15 @@ void* producer(void* file) {
 		sharpen(&img, &new);
 	}
 	
-	char* filename = malloc(sizeof(char) * (strlen(file) + 6));
-	strcpy(filename, effect);
-	strcat(filename, "_");
-	strcat(filename, file);
+	int size = strlen(file) + strlen(effect) + strlen(source) + 2;
+	char* destination = malloc(sizeof(char) * size);
+	strcpy(destination, source);
+	strcat(destination, "/");
+	strcat(destination, effect);
+	strcat(destination, "_");
+	strcat(destination, file);
 	
-	stack.filename[stack.count] = filename;
+	stack.destinations[stack.count] = destination;
 	stack.data[stack.count] = new;
 	stack.count++;
 
@@ -143,7 +153,7 @@ void* producer(void* file) {
 void* consumer(void* arg);
 void* consumer(void* arg) {
 	for (int i = 0; i < stack.count; i++) {
-		save_bitmap(stack.data[i], stack.filename[i]);
+		save_bitmap(stack.data[i], stack.destinations[i]);
 	}
 	
 	return NULL;
@@ -156,27 +166,39 @@ int main(int argc, char** argv) {
 		return 0;
 	}
 
-	DIR *d = opendir(".");
+	if (!opendir(argv[1]) || !argv[2] || !argv[3]) {
+		return 0;
+	}
+
+	source = argv[1];
+	destination = argv[2];
+	effect = argv[3];
+
+	DIR *d = opendir(source);
+	char* inputs[100];
 	
 	if (d) {
 		struct dirent *dir;
+		int count = 0;
+
 		while ((dir = readdir(d)) != NULL) {
 			char* f = malloc(sizeof(char) * (strlen(dir->d_name) + 1));
 			strcpy(f, dir->d_name);
 
 			if (strstr(dir->d_name, ".bmp")) {
-				printf("%s\n", f);
+				inputs[count] = f;
+				printf(inputs[count]);
+
+				count++;
 			}
     	}
 		
 		closedir(d);
 	}
 
-	effect = argv[1];	
-
 	stack_init();
 
-	char* files[3] = { "perroquet.bmp", "tiger.bmp", "tank.bmp" };
+	
 
 	pthread_t threads[4];
 
@@ -185,7 +207,7 @@ int main(int argc, char** argv) {
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
 	for(int i = 0; i < 3; i++) {
-		pthread_create(&threads[i], NULL, producer, files[i]);
+		pthread_create(&threads[i], NULL, producer, inputs[i]);
 	}
 
 	pthread_join(threads[2], NULL);
