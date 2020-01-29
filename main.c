@@ -12,17 +12,22 @@
 #include <pthread.h>
 #include <string.h>
 #include <dirent.h>
+#include <sys/stat.h>
 
 #define OFFSET 3 /2
 
+typedef struct ImageToConvert {
+	Image data;
+	char* destination;
+} ImageToConvert;
+
 typedef struct stack_t {
-	Image data[10];
-	char *destinations[500];
+	ImageToConvert **images;
 	int count;
-	/*int max;
+	int max;
 	pthread_mutex_t lock;
 	pthread_cond_t can_consume;
-	pthread_cond_t can_produce;*/
+	pthread_cond_t can_produce;
 } Stack;
 
 static Stack stack;
@@ -80,8 +85,8 @@ void apply_effect(Image* original, Image* new_i, const float KERNEL[3][3]) {
 void edge(Image* original, Image* new_i);
 void edge(Image* original, Image* new_i) {
 	const float mat[3][3] = {{-1, -1, -1},
-								 {-1,  8, -1},
-								 {-1, -1, -1}};
+							 {-1,  8, -1},
+							 {-1, -1, -1}};
 
 	apply_effect(original, new_i, mat);
 }
@@ -89,8 +94,8 @@ void edge(Image* original, Image* new_i) {
 void boxblur(Image* original, Image* new_i);
 void boxblur(Image* original, Image* new_i) {
 	const float mat[3][3] = {{0.1111111111, 0.1111111111, 0.1111111111},
-								 {0.1111111111, 0.1111111111, 0.1111111111},
-								 {0.1111111111, 0.1111111111, 0.1111111111}};
+							 {0.1111111111, 0.1111111111, 0.1111111111},
+							 {0.1111111111, 0.1111111111, 0.1111111111}};
 
 	apply_effect(original, new_i, mat);
 }
@@ -98,18 +103,19 @@ void boxblur(Image* original, Image* new_i) {
 void sharpen(Image* original, Image* new_i);
 void sharpen(Image* original, Image* new_i) {
 	const float mat[3][3] = {{ 0, -1,  0},
-								 {-1,  5, -1},
-								 { 0, -1,  0}};
+							 {-1,  5, -1},
+							 { 0, -1,  0}};
 
 	apply_effect(original, new_i, mat);
 }
 
 void stack_init() {
-	//pthread_cond_init(&stack.can_produce, NULL);
-	//pthread_cond_init(&stack.can_consume, NULL);
-	//pthread_mutex_init(&stack.lock, NULL);
-	//stack.max = STACK_MAX;
+	pthread_cond_init(&stack.can_produce, NULL);
+	pthread_cond_init(&stack.can_consume, NULL);
+	pthread_mutex_init(&stack.lock, NULL);
+	stack.max = 10;
 	stack.count = 0;
+	stack.images = malloc(sizeof(ImageToConvert) * 10);
 	srand(time(NULL));
 }
 
@@ -119,54 +125,70 @@ char* effect;
 
 void* producer(void* file);
 void* producer(void* file) {
-	char* sourcePath = malloc(sizeof(char) * 100);
-	strcpy(sourcePath, source);
-	strcat(sourcePath, "/");
-	strcat(sourcePath, file);
-
-	Image img = open_bitmap(sourcePath);
-	Image new;
-
-	if (strcmp(effect, "edge") == 0) {
-		edge(&img, &new);
-	} else if (strcmp(effect, "boxblur") == 0) {
-		boxblur(&img, &new);
-	} else if (strcmp(effect, "sharpen") == 0) {
-		sharpen(&img, &new);
-	}
 	
-	int size = strlen(file) + strlen(effect) + strlen(source) + 2;
-	char* destination = malloc(sizeof(char) * size);
-	strcpy(destination, source);
-	strcat(destination, "/");
-	strcat(destination, effect);
-	strcat(destination, "_");
-	strcat(destination, file);
-	
-	stack.destinations[stack.count] = destination;
-	stack.data[stack.count] = new;
-	stack.count++;
+	//while(1) {
+		pthread_mutex_lock(&stack.lock);
+		char* sourcePath = malloc(sizeof(char) * 100);
+		strcpy(sourcePath, source);
+		strcat(sourcePath, "/");
+		strcat(sourcePath, file);
+
+		Image img = open_bitmap(sourcePath);
+		Image new;
+
+		if (strcmp(effect, "edge") == 0) {
+			edge(&img, &new);
+		} else if (strcmp(effect, "boxblur") == 0) {
+			boxblur(&img, &new);
+		} else if (strcmp(effect, "sharpen") == 0) {
+			sharpen(&img, &new);
+		}
+		
+		int size = strlen(file) + strlen(effect) + strlen(source) + 2;
+		char* d = malloc(sizeof(char) * size);
+		strcpy(d, destination);
+		strcat(d, "/");
+		strcat(d, effect);
+		strcat(d, "_");
+		strcat(d, file);
+		
+		stack.images[stack.count] = malloc(sizeof(ImageToConvert));
+		stack.images[stack.count]->data = new;
+		stack.images[stack.count]->destination = d;
+		stack.count++;
+	//}
+
+	pthread_mutex_unlock(&stack.lock);
 
 	return NULL;
 }
 
 void* consumer(void* arg);
 void* consumer(void* arg) {
-	for (int i = 0; i < stack.count; i++) {
-		save_bitmap(stack.data[i], stack.destinations[i]);
+	while(1) {
+		pthread_mutex_lock(&stack.lock);
+		for (int i = 0; i < stack.count; i++) {
+			save_bitmap(stack.images[i]->data, stack.images[i]->destination);
+		}
+		pthread_cond_signal(&stack.can_produce);
+		pthread_mutex_unlock(&stack.lock);
+
+		break;
 	}
 	
 	return NULL;
 }
 
 int main(int argc, char** argv) {
-	argc--;
+	argc--;	
 
 	if (argc == 0) {
+		printf("%s \"./in/\" \"./out/\" boxblur\n", argv[0]); 
 		return 0;
 	}
 
 	if (!opendir(argv[1]) || !argv[2] || !argv[3]) {
+		printf("%s \"./in/\" \"./out/\" boxblur\n", argv[0]); 
 		return 0;
 	}
 
@@ -174,21 +196,52 @@ int main(int argc, char** argv) {
 	destination = argv[2];
 	effect = argv[3];
 
+	if (strcmp(effect, "edge") != 0 && strcmp(effect, "boxblur") != 0 && strcmp(effect, "sharpen") != 0) {
+		printf("Effets disponibles :\n- edge\n- boxblur\n- sharpen");
+		return 0;
+	}
+
+	
+
+	DIR *test = opendir(destination);
+
+	if (!test) {
+		mkdir(destination, "777");
+	} else {
+		struct dirent *dir;
+
+		while ((dir = readdir(test)) != NULL) {
+			//if (strstr(dir->d_name, ".bmp")) {
+				char dest_filename[50];
+				sprintf(dest_filename, "%s/%s", destination, dir->d_name);
+				printf("%s", dest_filename);
+				remove(dest_filename);
+			//}
+		}
+	}
+
+	/*if (exist == -1) {
+		printf("1");
+		mkdir(destination);
+	} else {
+		printf("2");
+		
+	}*/
+
 	DIR *d = opendir(source);
-	char* inputs[100];
+	char* files[100];
+
+	int count = 0;
 	
 	if (d) {
 		struct dirent *dir;
-		int count = 0;
 
 		while ((dir = readdir(d)) != NULL) {
 			char* f = malloc(sizeof(char) * (strlen(dir->d_name) + 1));
 			strcpy(f, dir->d_name);
 
 			if (strstr(dir->d_name, ".bmp")) {
-				inputs[count] = f;
-				printf(inputs[count]);
-
+				files[count] = f;
 				count++;
 			}
     	}
@@ -196,23 +249,21 @@ int main(int argc, char** argv) {
 		closedir(d);
 	}
 
-	stack_init();
+	stack_init();	
 
-	
-
-	pthread_t threads[4];
+	pthread_t threads[count + 1];
 
 	pthread_attr_t attr;
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-	for(int i = 0; i < 3; i++) {
-		pthread_create(&threads[i], NULL, producer, inputs[i]);
+	for(int i = 0; i < count; i++) {
+		pthread_create(&threads[i], NULL, producer, files[i]);
 	}
 
-	pthread_join(threads[2], NULL);
-	pthread_create(&threads[3], NULL, consumer, NULL);
-	pthread_join(threads[3], NULL);
+	pthread_join(threads[count - 1], NULL);
+	pthread_create(&threads[count], NULL, consumer, NULL);
+	pthread_join(threads[count], NULL);
 
 	return 0;
 }
