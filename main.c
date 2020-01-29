@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include "bitmap.h"
+#include "bitmap/bitmap.h"
 #include <stdint.h>
 #include <time.h>
 #include <pthread.h>
@@ -179,6 +179,24 @@ void* consumer(void* arg) {
 	return NULL;
 }
 
+void handleDestination(char* destination) {
+	DIR *d_dest = opendir(destination);
+
+	if (!d_dest) {
+		mkdir(destination, "777");
+	} else {
+		struct dirent *dir_dest;
+
+		while ((dir_dest = readdir(d_dest)) != NULL) {
+			char dest_filename[50];
+			sprintf(dest_filename, "%s/%s", destination, dir_dest->d_name);
+			unlink(dest_filename);
+		}
+
+		closedir(d_dest);
+	}
+}
+
 int main(int argc, char** argv) {
 	argc--;	
 
@@ -197,56 +215,31 @@ int main(int argc, char** argv) {
 	effect = argv[3];
 
 	if (strcmp(effect, "edge") != 0 && strcmp(effect, "boxblur") != 0 && strcmp(effect, "sharpen") != 0) {
-		printf("Effets disponibles :\n- edge\n- boxblur\n- sharpen");
+		printf("Effets disponibles :\n- edge\n- boxblur\n- sharpen\n");
 		return 0;
-	}
+	}	
 
-	
+	handleDestination(destination);
 
-	DIR *test = opendir(destination);
-
-	if (!test) {
-		mkdir(destination, "777");
-	} else {
-		struct dirent *dir;
-
-		while ((dir = readdir(test)) != NULL) {
-			//if (strstr(dir->d_name, ".bmp")) {
-				char dest_filename[50];
-				sprintf(dest_filename, "%s/%s", destination, dir->d_name);
-				printf("%s", dest_filename);
-				remove(dest_filename);
-			//}
-		}
-	}
-
-	/*if (exist == -1) {
-		printf("1");
-		mkdir(destination);
-	} else {
-		printf("2");
-		
-	}*/
-
-	DIR *d = opendir(source);
+	DIR *d_source = opendir(source);
 	char* files[100];
 
 	int count = 0;
 	
-	if (d) {
-		struct dirent *dir;
+	if (d_source) {
+		struct dirent *dir_source;
 
-		while ((dir = readdir(d)) != NULL) {
-			char* f = malloc(sizeof(char) * (strlen(dir->d_name) + 1));
-			strcpy(f, dir->d_name);
+		while ((dir_source = readdir(d_source)) != NULL) {
+			char* f = malloc(sizeof(char) * (strlen(dir_source->d_name) + 1));
+			strcpy(f, dir_source->d_name);
 
-			if (strstr(dir->d_name, ".bmp")) {
+			if (strstr(dir_source->d_name, ".bmp")) {
 				files[count] = f;
 				count++;
 			}
     	}
 		
-		closedir(d);
+		closedir(d_source);
 	}
 
 	stack_init();	
